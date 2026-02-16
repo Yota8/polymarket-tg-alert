@@ -1,58 +1,45 @@
-# 使用 Gamma API 获取 Polymarket 当前活跃且未关闭的市场列表
-# 按交易量降序，支持过滤 volume 和 liquidity
-# 自动处理 clobTokenIds 的各种可能格式（字符串 / 列表 / 带引号等）
+# gamma_active_events.py
+# 使用 Gamma Events API 获取 Polymarket 当前活跃事件
+# 每个事件下包含 market 的 question、clobTokenIds、outcomePrices 等
+# 支持过滤活跃、未关闭事件，按交易量或时间排序
 
 import httpx
 import time
-import re
+import json
 from typing import List, Dict, Any
 
 # ===================== 配置参数（可自行修改） =====================
-MAX_MARKETS_TO_SHOW = 10          # 最多显示多少个市场
-MIN_VOLUME_USD = 5000             # 最小交易量过滤（美元）
-MIN_LIQUIDITY_USD = 2000          # 最小流动性过滤（美元）
-REQUEST_TIMEOUT = 10              # 每个请求超时秒数
-PAGES_TO_FETCH = 2                # 分页次数（每页约 20-50 条）
-PER_PAGE_LIMIT = 50               # 每页请求数量
-SLEEP_BETWEEN_PAGES = 1.0         # 分页间隔（防限速）
+MAX_EVENTS_TO_SHOW = 5           # 最多显示多少个事件
+MIN_VOLUME_USD = 5000             # 最小事件交易量过滤（美元，如果有）
+REQUEST_TIMEOUT = 10              # 请求超时秒数
+PER_PAGE_LIMIT = 20               # 每页事件数量
+PAGES_TO_FETCH = 3                # 分页次数
+SORT_BY = "volume"                # 排序字段："volume" 或 "startTime"
+SORT_DIR = "desc"                 # "desc"（降序）或 "asc"（升序）
 
-# ===================== 函数：获取一页市场 =====================
-def fetch_page(page: int = 1) -> List[Dict[str, Any]]:
-    url = "https://gamma-api.polymarket.com/markets"
-    params = {
-        "active": "true",
-        "closed": "false",
-        "limit": str(PER_PAGE_LIMIT),
-        "offset": str((page - 1) * PER_PAGE_LIMIT),
-        "order_by": "volume",
-        "order_dir": "desc"
-    }
+# ===================== 函数：获取一页活跃事件 =====================
+def fetch_active_events(page: int = 1) -> List[Dict[str, Any]]:
+    url = "https://gamma-api.polymarket.com/events?active=true&closed=false&limit=5"
+    # params = {
+    #     "limit": str(PER_PAGE_LIMIT),
+    #     "offset": str((page - 1) * PER_PAGE_LIMIT),
+    #     "order_by": SORT_BY,
+    #     "order_dir": SORT_DIR
+    # }
 
     try:
-        print(f"正在请求第 {page} 页...")
-        resp = httpx.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        print(f"正在请求第 {page} 页事件...")
+        resp = httpx.get(url,  timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
 
-        data = resp.json()
+        events = resp.json()  # 直接返回 list of events
 
-        # Gamma API 通常直接返回 list，有时包裹在 {"data": [...]}
-        if isinstance(data, list):
-            markets = data
-        elif isinstance(data, dict) and "data" in data:
-            markets = data["data"]
-        else:
-            print("警告：未知响应格式")
-            return []
+        print(f"第 {page} 页：原始 {len(events)} 个事件")
 
-        # 过滤低量/低流动性市场
-        filtered = [
-            m for m in markets
-            if float(m.get("volume", 0)) >= MIN_VOLUME_USD
-            and float(m.get("liquidity", 0)) >= MIN_LIQUIDITY_USD
-        ]
-
-        print(f"第 {page} 页：原始 {len(markets)} 条 → 过滤后 {len(filtered)} 条")
-        return filtered
+        # 可选过滤：如果事件有 volume 属性（有些事件聚合了子 market 的 volume）
+        # filtered = [e for e in events if float(e.get("volume", 0)) >= MIN_VOLUME_USD]
+        # 这里先不严格过滤，因为 volume 可能在 market 里
+        return events
 
     except httpx.HTTPStatusError as e:
         print(f"HTTP 错误 {e.response.status_code}: {e.response.text[:200]}...")
@@ -64,68 +51,78 @@ def fetch_page(page: int = 1) -> List[Dict[str, Any]]:
 
 # ===================== 主函数 =====================
 def main():
-    print("=" * 90)
-    print("Polymarket 活跃市场查询（Gamma API）")
-    print(f"过滤：volume ≥ ${MIN_VOLUME_USD:,} | liquidity ≥ ${MIN_LIQUIDITY_USD:,}")
-    print(f"显示前 {MAX_MARKETS_TO_SHOW} 个")
-    print("=" * 90)
+    print("=" * 100)
+    print("Polymarket 活跃事件查询（使用官方 Gamma /events API）")
+    print(f"过滤：active=true, closed=false | 排序：{SORT_BY} {SORT_DIR}")
+    print(f"显示前 {MAX_EVENTS_TO_SHOW} 个事件")
+    print("=" * 100)
     print()
 
-    all_markets: List[Dict[str, Any]] = []
+    all_events: List[Dict[str, Any]] = []
 
     for page in range(1, PAGES_TO_FETCH + 1):
-        page_markets = fetch_page(page)
-        all_markets.extend(page_markets)
-        time.sleep(SLEEP_BETWEEN_PAGES)
+        page_events = fetch_active_events(page)
+        all_events.extend(page_events)
+        time.sleep(1.5)  # 防限速
 
-        # 如果返回少于 limit，说明可能没更多了
-        if len(page_markets) < PER_PAGE_LIMIT:
+        if len(page_events) < PER_PAGE_LIMIT:
             print("本页返回数量少于 limit，结束分页")
             break
 
-    if not all_markets:
-        print("没有找到符合条件的活跃市场")
-        print("可能原因：")
-        print("1. 当前时间没有活跃市场")
-        print("2. 网络问题或 API 临时不可用")
-        print("3. 过滤条件太严格（可降低 MIN_VOLUME_USD）")
+    if not all_events:
+        print("没有找到活跃事件")
+        print("可能原因：网络问题、API 临时不可用、或当前无活跃事件")
         return
 
-    print(f"\n最终找到 {len(all_markets)} 个符合条件的活跃市场")
-    print("-" * 90)
+    print(f"\n最终找到 {len(all_events)} 个活跃事件")
+    print("-" * 100)
 
-    for idx, market in enumerate(all_markets[:MAX_MARKETS_TO_SHOW], 1):
-        question = market.get("question", market.get("title", "无标题"))
-        active = market.get("active", "未知")
-        closed = market.get("closed", "未知")
-        accepting = market.get("accepting_orders", "未知")
-        volume = float(market.get("volume", 0))
-        liquidity = float(market.get("liquidity", 0))
+    for idx, event in enumerate(all_events[:MAX_EVENTS_TO_SHOW], 1):
+        event_id = event.get("id", "未知ID")
+        event_title = event.get("title", event.get("slug", "无事件标题"))
+        event_slug = event.get("slug", "未知slug")
+        active = event.get("active", "未知")
+        closed = event.get("closed", "未知")
+        event_tags = event.get("tags", "未知标签")
 
-        # 鲁棒处理 clobTokenIds
-        clob_raw = market.get("clobTokenIds")
-        clob_ids = []
+        print(f"{idx:2d}. 事件标题: {event_title}")
+        print(f"   事件 ID/Slug: {event_id} / {event_slug}")
+        print(f"   状态: active={active} | closed={closed}")
+        print(f"   状态: tags={event_tags}")
 
-        if clob_raw is not None:
-            if isinstance(clob_raw, list):
-                clob_ids = [str(x) for x in clob_raw]
-            elif isinstance(clob_raw, str):
-                # 清理可能的 JSON 字符串格式，如 ["id1","id2"] 或 "id1,id2"
-                cleaned = re.sub(r'[\[\]"\']', '', clob_raw)
-                clob_ids = [tid.strip() for tid in cleaned.split(',') if tid.strip()]
-            elif isinstance(clob_raw, (int, float, str)):
-                clob_ids = [str(clob_raw)]
+        # 展开该事件下的 markets（通常 1 个，但可能多个）
+        markets = event.get("markets", [])
+        if not markets:
+            print("   无市场数据")
+            print("-" * 100)
+            continue
 
-        yes_id = clob_ids[0] if len(clob_ids) > 0 else "未知YES"
-        no_id  = clob_ids[1] if len(clob_ids) > 1 else "未知NO"
+        for m_idx, market in enumerate(markets, 1):
+            question = market.get("question", "无问题标题")
+            outcome_prices = market.get("outcomePrices", "无价格数据")
+            # 这里polymarket可能为了兼容旧版本,clob_ids为字符串形式
+            clob_ids = market.get("clobTokenIds", [])
+            if isinstance(clob_ids, str):
+                import ast
+                try:
+                    clob_ids = ast.literal_eval(clob_ids)  # 安全解析字符串为列表
+                except (ValueError, SyntaxError):
+                    clob_ids = []  # 解析失败，返回空列表
+            else:
+                clob_ids = clob_ids if isinstance(clob_ids, list) else []
 
-        print(f"{idx:2d}. {question}")
-        print(f"   状态     : active={active} | closed={closed} | accepting_orders={accepting}")
-        print(f"   交易量    : ${volume:,.0f}")
-        print(f"   流动性    : ${liquidity:,.0f}")
-        print(f"   YES token : {yes_id}")
-        print(f"   NO  token : {no_id}")
-        print("-" * 90)
+
+            print("clob_ids : ", clob_ids)
+
+            yes_id = clob_ids[0] if len(clob_ids) > 0 else "未知YES"
+            no_id  = clob_ids[1] if len(clob_ids) > 1 else "未知NO"
+
+            print(f"   子市场 {m_idx}: {question}")
+            print(f"      YES token : {yes_id}")
+            print(f"      NO  token : {no_id}")
+            print(f"      当前价格参考: {outcome_prices}")
+
+        print("-" * 100)
 
 
 if __name__ == "__main__":
