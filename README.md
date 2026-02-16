@@ -1,5 +1,5 @@
 # polymarket-tg-alert
-This is an arbitrage monitoring bot based on telegram. Well commented, only for studying.
+This is an arbitrage monitoring bot based on telegram. Well commented, only for study.
 
 
 
