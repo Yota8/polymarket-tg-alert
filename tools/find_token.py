@@ -112,8 +112,6 @@ def main():
                 clob_ids = clob_ids if isinstance(clob_ids, list) else []
 
 
-            print("clob_ids : ", clob_ids)
-
             yes_id = clob_ids[0] if len(clob_ids) > 0 else "未知YES"
             no_id  = clob_ids[1] if len(clob_ids) > 1 else "未知NO"
 
