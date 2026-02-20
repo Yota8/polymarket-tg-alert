@@ -1,4 +1,4 @@
-# 每隔一段时间扫描活跃市场，计算 spread，发现机会时警报
+# polymarket_monitor_time_sort.py - 时间排序版：每次看到新开的市场
 
 import httpx
 import time
@@ -6,135 +6,186 @@ import asyncio
 from py_clob_client.client import ClobClient
 from decimal import Decimal
 from typing import List, Dict, Any
+import ast
+import json
+import re
+import random  # 用于随机偏移（可选）
 
-# ===================== 配置（可自行修改） =====================
-SCAN_INTERVAL_SECONDS = 30        # 扫描间隔（秒）
-ALERT_THRESHOLD = Decimal('0.005')  # spread > 0.5% 才警报
-MAX_EVENTS_PER_SCAN = 20          # 每轮最多检查多少个事件（防太多导致超时）
-REQUEST_TIMEOUT = 10              # API 请求超时
-RETRY_ATTEMPTS = 3                # 失败重试次数
-RETRY_DELAY = 5                   # 重试间隔秒
+# ===================== 配置 =====================
+SCAN_INTERVAL_SECONDS = 30
+MAX_EVENTS_PER_SCAN = 200
+ALERT_THRESHOLD = Decimal('0.005')
 
-# Gamma API 配置
+# 分页设置
+PER_PAGE_LIMIT = 50
+MAX_PAGES = 3  # 总事件数 = MAX_PAGES × PER_PAGE_LIMIT
+MAX_MARKETS_TOTAL_PER_SCAN = 200  # 每轮最多检查的市场数
+
+# Gamma API 配置 - 改用时间排序
 GAMMA_EVENTS_URL = "https://gamma-api.polymarket.com/events"
 GAMMA_PARAMS = {
     "active": "true",
     "closed": "false",
-    "limit": "50",                # 每页最多50
-    "order_by": "volume",
-    "order_dir": "desc"
+    "limit": str(PER_PAGE_LIMIT),
+    "order_by": "startDate",  # 改成按开始时间排序（最新开的市场排前面）
+    "order_dir": "desc"  # desc = 最新开始的先（最近新开的优先）
 }
 
-# CLOB 客户端（用于 get_price）
 clob_client = ClobClient("https://clob.polymarket.com", chain_id=137)
 
 
-# ===================== 函数：获取活跃事件列表 =====================
 def fetch_active_events() -> List[Dict[str, Any]]:
-    events = []
-    for attempt in range(RETRY_ATTEMPTS):
-        try:
-            resp = httpx.get(GAMMA_EVENTS_URL, params=GAMMA_PARAMS, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            events = resp.json()
-            print(f"获取到 {len(events)} 个活跃事件")
-            return events
-        except Exception as e:
-            print(f"获取事件失败 (尝试 {attempt+1}/{RETRY_ATTEMPTS}): {str(e)}")
-            if attempt < RETRY_ATTEMPTS - 1:
-                time.sleep(RETRY_DELAY)
-    return []
+    all_events = []
+    for page in range(MAX_PAGES):
+        offset = page * PER_PAGE_LIMIT
+        params = GAMMA_PARAMS.copy()
+        params["offset"] = str(offset)
+
+        # 可选：加随机偏移，让每次翻页位置不同（更“新鲜”）
+        # random_offset = random.randint(0, 50)
+        # params["offset"] = str(offset + random_offset)
+
+        for attempt in range(3):
+            try:
+                resp = httpx.get(GAMMA_EVENTS_URL, params=params, timeout=10)
+                resp.raise_for_status()
+                page_events = resp.json()
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 第 {page + 1} 页 获取到 {len(page_events)} 个事件")
+                all_events.extend(page_events)
+                break
+            except Exception as e:
+                print(f"第 {page + 1} 页 获取失败: {str(e)}")
+                time.sleep(3)
+
+    print(f"总共获取到 {len(all_events)} 个活跃事件（按开始时间最新排序）")
+    return all_events
 
 
-# ===================== 函数：计算单个市场的 spread =====================
-def calculate_spread(yes_token_id: str, no_token_id: str) -> Decimal:
+def parse_string_list(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    if not isinstance(raw, str):
+        return []
+    raw = raw.strip()
+    if not raw:
+        return []
     try:
-        # 获取 YES best_ask
-        yes_resp = clob_client.get_price(yes_token_id, side="sell")
-        yes_ask = Decimal(yes_resp['price']) if 'price' in yes_resp else None
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    except:
+        pass
+    try:
+        parsed = ast.literal_eval(raw)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    except:
+        pass
+    cleaned = re.sub(r'[\[\]"\']', '', raw)
+    return [x.strip() for x in cleaned.split(',') if x.strip()]
 
-        # 获取 NO best_ask
-        no_resp = clob_client.get_price(no_token_id, side="sell")
-        no_ask = Decimal(no_resp['price']) if 'price' in no_resp else None
 
-        if yes_ask is None or no_ask is None:
-            return Decimal('0')  # 无法计算，返回 0
+def get_best_ask_price(token_id: str) -> Decimal | None:
+    try:
+        resp = clob_client.get_price(token_id, side="sell")
+        price_raw = resp.get('price')
+        if price_raw is None:
+            return None
+        price_list = parse_string_list(price_raw)
+        if price_list:
+            try:
+                return Decimal(price_list[0])
+            except:
+                return None
+        return None
+    except Exception:
+        return None
 
-        combined_ask = yes_ask + no_ask
-        spread = Decimal('1') - combined_ask
-        return spread
 
-    except Exception as e:
-        print(f"计算 spread 失败: {str(e)}")
+def calculate_spread(yes_token_id: str, no_token_id: str) -> Decimal:
+    yes_ask = get_best_ask_price(yes_token_id)
+    no_ask = get_best_ask_price(no_token_id)
+    if yes_ask is None or no_ask is None:
         return Decimal('0')
+    combined = yes_ask + no_ask
+    return Decimal('1') - combined
 
 
-# ===================== 主循环 =====================
 async def monitor_loop():
     print("=" * 80)
-    print("Polymarket 套利监控机器人 已启动")
-    print(f"扫描间隔: {SCAN_INTERVAL_SECONDS} 秒 | 警报阈值: {ALERT_THRESHOLD*100:.2f}%")
-    print("按 Ctrl+C 停止")
+    print("Polymarket 套利监控机器人 - 时间排序版 已启动")
+    print(f"扫描间隔: {SCAN_INTERVAL_SECONDS}s | 阈值: {ALERT_THRESHOLD * 100:.2f}%")
+    print(f"每轮翻页: {MAX_PAGES} 页（总 {MAX_PAGES * PER_PAGE_LIMIT} 个事件）")
+    print("按开始时间最新排序 - 每次都能看到最近新开的市场")
     print("=" * 80)
-    print()
 
     while True:
         try:
             events = fetch_active_events()
             if not events:
-                print("暂无活跃事件，继续等待...")
                 time.sleep(SCAN_INTERVAL_SECONDS)
                 continue
 
             alert_found = False
+            checked_count = 0
+            seen_questions = set()
+
+            market_limit_reached = False
 
             for event in events[:MAX_EVENTS_PER_SCAN]:
-                event_title = event.get("title", event.get("slug", "无标题"))
+                if market_limit_reached:
+                    break
+
+                title = event.get("title", event.get("slug", "无标题"))
                 markets = event.get("markets", [])
 
                 for market in markets:
+                    if checked_count >= MAX_MARKETS_TOTAL_PER_SCAN:
+                        market_limit_reached = True
+                        break
+
                     question = market.get("question", "无问题")
-                    clob_ids = market.get("clobTokenIds", [])
 
-                    # 处理 clobTokenIds（兼容字符串/列表）
-                    if isinstance(clob_ids, str):
-                        import ast
-                        try:
-                            clob_ids = ast.literal_eval(clob_ids)
-                        except:
-                            clob_ids = []
-                    else:
-                        clob_ids = clob_ids if isinstance(clob_ids, list) else []
+                    if question in seen_questions:
+                        continue
+                    seen_questions.add(question)
 
+                    clob_ids_raw = market.get("clobTokenIds", [])
+                    clob_ids = parse_string_list(clob_ids_raw)
                     if len(clob_ids) < 2:
-                        continue  # 跳过无效市场
+                        continue
 
-                    yes_id = clob_ids[0]
-                    no_id  = clob_ids[1]
+                    outcome_prices_raw = market.get("outcomePrices", [])
+                    outcome_prices = parse_string_list(outcome_prices_raw)
+                    # 恢复过滤（可注释调试）
+                    if not outcome_prices or all(float(p or '0') == 0 for p in outcome_prices):
+                        continue
 
-                    spread = calculate_spread(yes_id, no_id)
+                    checked_count += 1
+                    spread = calculate_spread(clob_ids[0], clob_ids[1])
 
                     if spread > ALERT_THRESHOLD:
                         alert_found = True
-                        print("\n" + "!" * 60)
-                        print(f"!!! 发现套利机会 !!! Spread: {spread*100:.4f}%")
-                        print(f"事件标题: {event_title}")
-                        print(f"市场问题: {question}")
-                        print(f"YES token: {yes_id}")
-                        print(f"NO  token: {no_id}")
-                        print("!" * 60)
+                        print("\n" + "!" * 70)
+                        print(f"!!! 发现套利机会 !!! Spread: {spread * 100:.4f}%")
+                        print(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                        print(f"事件: {title}")
+                        print(f"市场: {question}")
+                        print(f"YES: {clob_ids[0][:20]}...")
+                        print(f"NO : {clob_ids[1][:20]}...")
+                        print("!" * 70)
 
-            if not alert_found:
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 本轮扫描无机会，继续监控...")
+            status = f"本轮检查 {checked_count} 个有效市场"
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {status}，{'有警报' if alert_found else '无机会'}")
 
             time.sleep(SCAN_INTERVAL_SECONDS)
 
         except KeyboardInterrupt:
-            print("\n用户停止监控，退出")
+            print("\n停止监控")
             break
         except Exception as e:
             print(f"主循环异常: {str(e)}")
-            time.sleep(30)  # 异常后等待更长时间再重试
+            time.sleep(30)
 
 
 if __name__ == "__main__":
