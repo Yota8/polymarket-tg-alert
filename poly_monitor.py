@@ -1,5 +1,3 @@
-# polymarket_monitor_time_sort.py - 时间排序版：每次看到新开的市场
-
 import httpx
 import time
 import asyncio
@@ -9,12 +7,11 @@ from typing import List, Dict, Any
 import ast
 import json
 import re
-import random  # 用于随机偏移（可选）
 
 # ===================== 配置 =====================
 SCAN_INTERVAL_SECONDS = 30
 MAX_EVENTS_PER_SCAN = 200
-ALERT_THRESHOLD = Decimal('0.005')
+ALERT_THRESHOLD = Decimal('0.0001')
 
 # 分页设置
 PER_PAGE_LIMIT = 50
@@ -174,6 +171,7 @@ async def monitor_loop():
                         print(f"YES: {clob_ids[0][:20]}...")
                         print(f"NO : {clob_ids[1][:20]}...")
                         print("!" * 70)
+                        break
 
             status = f"本轮检查 {checked_count} 个有效市场"
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {status}，{'有警报' if alert_found else '无机会'}")
