@@ -1,3 +1,5 @@
+import random
+
 import httpx
 import time
 import asyncio
@@ -33,28 +35,21 @@ clob_client = ClobClient("https://clob.polymarket.com", chain_id=137)
 
 def fetch_active_events() -> List[Dict[str, Any]]:
     all_events = []
+    random_start = random.randint(0, 1000)  # 随机从 0~500 开始（覆盖更多范围）
+    print(f"本次随机起始偏移: {random_start}")
     for page in range(MAX_PAGES):
-        offset = page * PER_PAGE_LIMIT
+        offset = random_start + page * PER_PAGE_LIMIT
         params = GAMMA_PARAMS.copy()
         params["offset"] = str(offset)
-
-        # 可选：加随机偏移，让每次翻页位置不同（更“新鲜”）
-        # random_offset = random.randint(0, 50)
-        # params["offset"] = str(offset + random_offset)
-
-        for attempt in range(3):
-            try:
-                resp = httpx.get(GAMMA_EVENTS_URL, params=params, timeout=10)
-                resp.raise_for_status()
-                page_events = resp.json()
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 第 {page + 1} 页 获取到 {len(page_events)} 个事件")
-                all_events.extend(page_events)
-                break
-            except Exception as e:
-                print(f"第 {page + 1} 页 获取失败: {str(e)}")
-                time.sleep(3)
-
-    print(f"总共获取到 {len(all_events)} 个活跃事件（按开始时间最新排序）")
+        try:
+            resp = httpx.get(GAMMA_EVENTS_URL, params=params, timeout=10)
+            resp.raise_for_status()
+            page_events = resp.json()
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 第 {page+1} 页 (偏移 {offset}) 获取到 {len(page_events)} 个事件")
+            all_events.extend(page_events)
+        except Exception as e:
+            print(f"第 {page+1} 页 获取失败: {str(e)}")
+    print(f"总共获取到 {len(all_events)} 个活跃事件（随机偏移 {random_start}）")
     return all_events
 
 
@@ -135,6 +130,12 @@ async def monitor_loop():
 
                 title = event.get("title", event.get("slug", "无标题"))
                 markets = event.get("markets", [])
+
+                for market in markets:
+                    market_id = market.get("id", "未知ID")  # 提取 id
+                    question = market.get("question", "无问题")
+
+                    print(f"市场 ID: {market_id} | 问题: {question}")
 
                 for market in markets:
                     if checked_count >= MAX_MARKETS_TOTAL_PER_SCAN:
