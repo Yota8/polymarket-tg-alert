@@ -11,7 +11,7 @@ import re
 
 # ===================== Telegram 配置 =====================
 TELEGRAM_TOKEN = "8568679775:AAG9oc9KfyGed217SQjvfXxky7eBF3KjTJc"      # 你的 Token（已填）
-TELEGRAM_CHAT_ID = "8568679775"                                        # 你的 chat_id（已填）
+TELEGRAM_CHAT_ID = "7384249729"                                        # 你的 chat_id（已填）
 
 # ===================== 其他配置 =====================
 SCAN_INTERVAL_SECONDS = 30
@@ -170,7 +170,6 @@ async def monitor_loop():
 
                     question = market.get("question", "无问题")
                     market_id = market.get("id", "未知ID")  # 提取 id
-                    print(f"市场 ID: {market_id} | 问题: {question}")
 
                     if question in seen_questions:
                         continue
@@ -201,7 +200,9 @@ async def monitor_loop():
                     checked_count += 1
                     spread = calculate_spread(clob_ids[0], clob_ids[1])
 
-                    if spread > ALERT_THRESHOLD:
+                    print(f"市场 ID: {market_id} | 问题: {question} | spread: {spread}")
+
+                    if spread < ALERT_THRESHOLD:
                         alert_found = True
                         alert_msg_console = (
                             "\n" + "!" * 70 + "\n"
@@ -230,6 +231,8 @@ async def monitor_loop():
 
                         # 发送 Telegram
                         await send_telegram_alert(alert_msg_tg)
+
+                        break
 
             status = f"本轮检查 {checked_count} 个有效市场"
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {status}，{'有警报' if alert_found else '无机会'}")
