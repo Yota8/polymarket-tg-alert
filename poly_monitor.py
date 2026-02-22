@@ -11,13 +11,13 @@ import re
 
 # ===================== Telegram 配置 =====================
 import telegram_settings
-TELEGRAM_TOKEN = telegram_settings.TELEGRAM_TOKEN      # 你的 Token（已填）
-TELEGRAM_CHAT_ID = telegram_settings.TELEGRAM_CHAT_ID                                        # 你的 chat_id（已填）
+TELEGRAM_TOKEN = telegram_settings.TELEGRAM_TOKEN      # 你的 Token
+TELEGRAM_CHAT_ID = telegram_settings.TELEGRAM_CHAT_ID  # 你的 chat_id
 
 # ===================== 其他配置 =====================
 SCAN_INTERVAL_SECONDS = 30
 MAX_EVENTS_PER_SCAN = 200
-ALERT_THRESHOLD = Decimal('0.0001')
+ALERT_THRESHOLD = Decimal('0.001')
 MIN_LIQUIDITY_USD = 5000.0
 
 PER_PAGE_LIMIT = 50
@@ -59,7 +59,7 @@ async def send_telegram_alert(alert_msg: str):
         await telegram_bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=alert_msg,
-            parse_mode="Markdown",
+            parse_mode=None,
             disable_web_page_preview=True
         )
         print("Telegram 警报已发送")
@@ -203,7 +203,7 @@ async def monitor_loop():
 
                     print(f"市场 ID: {market_id} | 问题: {question} | spread: {spread}")
 
-                    if spread < ALERT_THRESHOLD:
+                    if spread > ALERT_THRESHOLD:
                         alert_found = True
                         alert_msg_console = (
                             "\n" + "!" * 70 + "\n"
@@ -232,8 +232,6 @@ async def monitor_loop():
 
                         # 发送 Telegram
                         await send_telegram_alert(alert_msg_tg)
-
-                        break
 
             status = f"本轮检查 {checked_count} 个有效市场"
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {status}，{'有警报' if alert_found else '无机会'}")

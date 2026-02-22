@@ -1,11 +1,9 @@
-# gamma_active_events.py
 # 使用 Gamma Events API 获取 Polymarket 当前活跃事件
 # 每个事件下包含 market 的 question、clobTokenIds、outcomePrices 等
 # 支持过滤活跃、未关闭事件，按交易量或时间排序
 
 import httpx
 import time
-import json
 from typing import List, Dict, Any
 
 # ===================== 配置参数（可自行修改） =====================
@@ -20,12 +18,6 @@ SORT_DIR = "desc"                 # "desc"（降序）或 "asc"（升序）
 # ===================== 函数：获取一页活跃事件 =====================
 def fetch_active_events(page: int = 1) -> List[Dict[str, Any]]:
     url = "https://gamma-api.polymarket.com/events?active=true&closed=false&limit=5"
-    # params = {
-    #     "limit": str(PER_PAGE_LIMIT),
-    #     "offset": str((page - 1) * PER_PAGE_LIMIT),
-    #     "order_by": SORT_BY,
-    #     "order_dir": SORT_DIR
-    # }
 
     try:
         print(f"正在请求第 {page} 页事件...")
