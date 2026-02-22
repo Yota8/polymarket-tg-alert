@@ -1,4 +1,3 @@
-# market_test.py - 修复版：正确处理 get_price 返回的字典
 from py_clob_client.client import ClobClient
 from decimal import Decimal
 import asyncio
@@ -11,9 +10,7 @@ async def main():
     no_token_id  = "103693433518125527001416636574099415821922498558487623412396163292963814003978"
 
     yes_best_ask = None
-    yes_best_bid = None
     no_best_ask  = None
-    no_best_bid  = None
 
     print("查询 YES...")
     try:
