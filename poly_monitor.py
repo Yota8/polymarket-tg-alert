@@ -10,8 +10,9 @@ import json
 import re
 
 # ===================== Telegram 配置 =====================
-TELEGRAM_TOKEN = "8568679775:AAG9oc9KfyGed217SQjvfXxky7eBF3KjTJc"      # 你的 Token（已填）
-TELEGRAM_CHAT_ID = "7384249729"                                        # 你的 chat_id（已填）
+import telegram_settings
+TELEGRAM_TOKEN = telegram_settings.TELEGRAM_TOKEN      # 你的 Token（已填）
+TELEGRAM_CHAT_ID = telegram_settings.TELEGRAM_CHAT_ID                                        # 你的 chat_id（已填）
 
 # ===================== 其他配置 =====================
 SCAN_INTERVAL_SECONDS = 30
