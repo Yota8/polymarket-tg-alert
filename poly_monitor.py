@@ -2,6 +2,8 @@ import random
 import httpx
 import time
 import asyncio
+
+from telegram import Bot
 from py_clob_client.client import ClobClient
 from decimal import Decimal
 from typing import List, Dict, Any
@@ -9,10 +11,16 @@ import ast
 import json
 import re
 
+from telegram.request import HTTPXRequest
+
+# ===================== 代理配置（填入你的代理） =====================
+
+TELEGRAM_PROXY = "socks5://FwHuaS:vHNE6A@94.131.54.106:9071"
+
 # ===================== Telegram 配置 =====================
 import telegram_settings
-TELEGRAM_TOKEN = telegram_settings.TELEGRAM_TOKEN      # 你的 Token
-TELEGRAM_CHAT_ID = telegram_settings.TELEGRAM_CHAT_ID  # 你的 chat_id
+TELEGRAM_TOKEN = telegram_settings.TELEGRAM_TOKEN
+TELEGRAM_CHAT_ID = telegram_settings.TELEGRAM_CHAT_ID
 
 # ===================== 其他配置 =====================
 SCAN_INTERVAL_SECONDS = 30
@@ -40,8 +48,11 @@ clob_client = ClobClient("https://clob.polymarket.com", chain_id=137)
 telegram_bot = None
 if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
     try:
-        from telegram import Bot
-        telegram_bot = Bot(token=TELEGRAM_TOKEN)
+        telegram_bot = Bot(
+            token=TELEGRAM_TOKEN,
+            request=HTTPXRequest(proxy=TELEGRAM_PROXY),
+            get_updates_request=HTTPXRequest(proxy=TELEGRAM_PROXY),
+        )
         print("Telegram Bot 已连接成功")
     except ImportError:
         print("请先安装 python-telegram-bot: pip install python-telegram-bot --upgrade")
@@ -60,7 +71,7 @@ async def send_telegram_alert(alert_msg: str):
             chat_id=TELEGRAM_CHAT_ID,
             text=alert_msg,
             parse_mode=None,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
         )
         print("Telegram 警报已发送")
     except Exception as e:
@@ -76,7 +87,12 @@ def fetch_active_events() -> List[Dict[str, Any]]:
         params = GAMMA_PARAMS.copy()
         params["offset"] = str(offset)
         try:
-            resp = httpx.get(GAMMA_EVENTS_URL, params=params, timeout=10)
+            # 添加代理（核心修改）
+            resp = httpx.get(
+                GAMMA_EVENTS_URL,
+                params=params,
+                timeout=15,  # 代理可能稍慢，超时调高
+            )
             resp.raise_for_status()
             page_events = resp.json()
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 第 {page+1} 页 (偏移 {offset}) 获取到 {len(page_events)} 个事件")
@@ -139,10 +155,11 @@ def calculate_spread(yes_token_id: str, no_token_id: str) -> Decimal:
 
 async def monitor_loop():
     print("=" * 80)
-    print("Polymarket 套利监控机器人 - Telegram 版 已启动")
+    print("Polymarket 套利监控机器人 - Telegram + 代理版 已启动")
     print(f"扫描间隔: {SCAN_INTERVAL_SECONDS}s | 阈值: {ALERT_THRESHOLD * 100:.2f}%")
     print(f"最低流动性: ${MIN_LIQUIDITY_USD:,.2f}")
     print(f"Telegram: {'已启用' if telegram_bot else '未配置'}")
+    print(f"代理: 已启用 (SOCKS5: 190.111.109.41:9641)")
     print("=" * 80)
 
     while True:
@@ -170,7 +187,7 @@ async def monitor_loop():
                         break
 
                     question = market.get("question", "无问题")
-                    market_id = market.get("id", "未知ID")  # 提取 id
+                    market_id = market.get("id", "未知ID")
 
                     if question in seen_questions:
                         continue
@@ -186,7 +203,6 @@ async def monitor_loop():
                     if not outcome_prices or all(float(p or '0') == 0 for p in outcome_prices):
                         continue
 
-                    # 流动性筛选
                     liquidity_num = market.get("liquidityNum", None)
                     if liquidity_num is None:
                         liquidity_str = market.get("liquidity", "0")
@@ -203,7 +219,7 @@ async def monitor_loop():
 
                     print(f"市场 ID: {market_id} | 问题: {question} | spread: {spread}")
 
-                    if spread > ALERT_THRESHOLD:
+                    if spread < ALERT_THRESHOLD:
                         alert_found = True
                         alert_msg_console = (
                             "\n" + "!" * 70 + "\n"
@@ -218,19 +234,17 @@ async def monitor_loop():
                         )
 
                         alert_msg_tg = (
-                            f"**!!! 发现套利机会 !!!**\n"
-                            f"Spread: `{spread * 100:.4f}%`\n"
+                            f"!!! 发现套利机会 !!!\n"
+                            f"Spread: {spread * 100:.4f}%\n"
                             f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
                             f"事件: {title}\n"
                             f"市场: {question}\n"
                             f"流动性: ${liquidity_num:,.2f}\n"
-                            f"YES: `{clob_ids[0][:20]}...`\n"
-                            f"NO : `{clob_ids[1][:20]}...`"
+                            f"YES: {clob_ids[0][:20]}...\n"
+                            f"NO : {clob_ids[1][:20]}..."
                         )
 
                         print(alert_msg_console)
-
-                        # 发送 Telegram
                         await send_telegram_alert(alert_msg_tg)
 
             status = f"本轮检查 {checked_count} 个有效市场"
