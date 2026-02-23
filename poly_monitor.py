@@ -12,15 +12,13 @@ import json
 import re
 
 from telegram.request import HTTPXRequest
+import telegram_settings
 
-# ===================== 代理配置（填入你的代理） =====================
-
-TELEGRAM_PROXY = "socks5://FwHuaS:vHNE6A@94.131.54.106:9071"
 
 # ===================== Telegram 配置 =====================
-import telegram_settings
 TELEGRAM_TOKEN = telegram_settings.TELEGRAM_TOKEN
 TELEGRAM_CHAT_ID = telegram_settings.TELEGRAM_CHAT_ID
+TELEGRAM_PROXY = telegram_settings.TELEGRAM_PROXY
 
 # ===================== 其他配置 =====================
 SCAN_INTERVAL_SECONDS = 30
